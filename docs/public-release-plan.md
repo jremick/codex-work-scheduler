@@ -1,31 +1,34 @@
 # Public release plan
 
-Status: **Stage 1 complete - sanitized private release candidate**
+Status: **Stage 2 - Public Alpha**
 
-Target: **Stage 2 - Public Alpha with an alpha prerelease**
+Target: **Stage 3 - Public Beta**
 
 Last reviewed: **2026-08-30**
 
-This plan records release evidence and the final approval boundary. It does not authorize a visibility change, tag, release, package publication, authentication change, or announcement.
+This plan records the completed public-alpha release evidence and the approval boundary used for the cut. It does not authorize a future release, package publication, authentication change, or announcement.
 
-## Current release candidate
+## Current public alpha
 
 - The repository explains its safety boundary, alpha limitations, source-checkout quick start, disabled background supervisor, support, security, contribution terms, compatibility, and Apache-2.0 license.
 - The background supervisor and launchd staging surface are integrated. The example remains disabled, and the repository has no launchd installation or activation command.
 - Runtime state, local configuration, SQLite files, logs, environment files, approvals, and rendered plists are ignored.
 - The runtime uses only Python's standard library.
 - The combined local suite contains 87 tests, including fake App Server, supervisor, notification, recovery, redaction, and launchd staging coverage.
-- Private GitHub Actions pass on sanitized `main` for Python 3.9, 3.11, and 3.13, plus the separate `Public safety` job.
-- Public distribution will be a source checkout and GitHub-generated source archive. No package or installer will be published.
+- GitHub Actions pass on `main` for Python 3.9, 3.11, and 3.13, plus the separate `Public safety` job.
+- Public distribution is a source checkout and GitHub-generated source archive. No package or installer is published.
 
-Live GitHub read-back on 2026-08-30 confirms:
+Live post-release GitHub read-back on 2026-08-30 confirms:
 
-- The repository is private, `main` is the default branch, and no tag or release exists.
-- The release-candidate repository starts from one sanitized snapshot without the predecessor repository's pull-request or development history.
+- The repository is public and `main` is the default branch.
+- Annotated tag `v0.6.0-alpha.1` targets commit `338848945f9eb69865fc00deec7632a9816fe759`. The matching GitHub release is published as a prerelease with no custom assets.
+- The alpha release retains only the sanitized release history. The predecessor repository remains a separate private read-only archive.
 - GitHub detects Apache-2.0.
 - The approved description and eight topics are present; the homepage is empty.
 - Issues are enabled. Projects, Wiki, and Discussions are disabled.
-- Private branch protection and rulesets remain unavailable on the current plan (`403`). Private vulnerability reporting remains unavailable (`404`), and `security_and_analysis` is not exposed in the private state. These controls remain part of the public cut.
+- Secret scanning, push protection, vulnerability alerts, and private vulnerability reporting are enabled. The secret-scanning alert count was zero at the cut.
+- Classic protection on `main` requires the four observed GitHub Actions checks with strict freshness and conversation resolution. Force pushes and branch deletion are blocked. Administrator emergency bypass remains available for the solo maintainer.
+- Dependabot security updates and CodeQL remain deferred because this source-only standard-library project has no third-party package manifest. Projects, Wiki, and Discussions remain disabled.
 
 ## Interface and support boundary
 
@@ -35,7 +38,7 @@ The controller can prevent intentional dispatch when supported signals show unsa
 
 The optional supervisor cannot create approval or change a stored package. It runs in the foreground, owns a singleton lease, dispatches at most one eligible package per cycle, and moves uncertain work to review without automatic retry. LaunchAgent activation is outside the public-alpha claim.
 
-The App Server allowlists and field names were checked against current official Codex documentation on 2026-08-30. Repeat the check at the public cut if the release candidate or official documentation changes. A documentation match does not replace the fake-server suite or a separately approved read-only live canary.
+The App Server allowlists and field names were checked against current official Codex documentation on 2026-08-30. Repeat the check before a future release if the source or official documentation changes. A documentation match does not replace the fake-server suite or a separately approved read-only live canary.
 
 ## Completed private preparation gate
 
@@ -52,9 +55,9 @@ The following checks passed while the repository remained private:
 
 CodeQL is deferred unless it becomes available and adds useful signal. The repository has no third-party Python manifest, so dependency automation would currently imply a dependency surface that does not exist.
 
-## Final public-alpha release gate
+## Completed public-alpha release gate
 
-The release cut combines public visibility with one GitHub alpha prerelease. It must be one bounded, separately approved window:
+The approved release window completed these steps:
 
 1. Name the alpha version and confirm it matches the source version and release notes.
 2. Confirm the exact private `main` commit and successful required checks.
@@ -79,16 +82,14 @@ Do not announce the project in this window. If a material leak, missing license,
 - [x] GitHub Actions passed on sanitized private `main`; actual check contexts recorded.
 - [x] Tracked-file, snapshot-history, and public-surface hygiene checks passed on the private release candidate.
 - [x] Apache-2.0 detection and approved private-safe metadata read back from GitHub.
-- [ ] Public security settings and `main` protection applied and read back after visibility changes.
+- [x] Public security settings and `main` protection applied and read back after visibility changes.
 - [x] Alpha limitations and paid-credit guarantee boundary are prominent.
-- [ ] Version, release notes, visibility, tag, and prerelease received final approval.
-- [ ] Anonymous post-public clone and setup verification passed.
+- [x] Version, release notes, visibility, tag, and prerelease received final approval.
+- [x] Anonymous post-public clone and setup verification passed.
 
-## Exact later approval
+## Completed release authorization
 
-Request this bounded approval with the final version and commit filled in. The prepared source and release version is `0.6.0-alpha.1`; the tag remains a release decision:
-
-> Approve making `jremick/codex-work-scheduler` public at commit `<commit>`, applying and verifying the documented public security and `main` protection settings, running anonymous read-back and clean-checkout verification, then creating annotated tag `<version>` and a GitHub alpha prerelease with the reviewed notes and only GitHub-generated source archives. Do not publish a package or announce the project. If a material gate fails, stop; restore private visibility when available, and remove only a newly created incorrect release or tag.
+The maintainer approved the bounded public cut for commit `338848945f9eb69865fc00deec7632a9816fe759` and tag `v0.6.0-alpha.1`. The [GitHub alpha prerelease](https://github.com/jremick/codex-work-scheduler/releases/tag/v0.6.0-alpha.1) uses only GitHub-generated source archives. No package was published and no announcement was made.
 
 ## Deferred beyond public alpha
 
