@@ -26,6 +26,9 @@ LOCAL_DRY_RUN_CAPABILITIES = frozenset(
         "queue.read",
         "queue.local.write",
         "quota.read",
+        "quota_guard.read",
+        "quota_guard.local.write",
+        "quota_guard.thread.control",
         "reconcile.local",
         "simulate.local",
         "work.dispatch",
@@ -61,6 +64,20 @@ MONITOR_OUTBOUND_ALLOWLIST = frozenset(
         "initialize",
         "initialized",
         "thread/read",
+    }
+)
+
+QUOTA_GUARD_OUTBOUND_ALLOWLIST = frozenset(
+    {
+        "initialize",
+        "initialized",
+        "thread/list",
+        "thread/read",
+        "thread/goal/get",
+        "thread/goal/set",
+        "thread/resume",
+        "turn/interrupt",
+        "turn/start",
     }
 )
 

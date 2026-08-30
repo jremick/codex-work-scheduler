@@ -85,6 +85,10 @@ Probe failures use bounded exponential backoff with jitter. Expired work claims 
 
 The repository can render and validate a disabled LaunchAgent plist to a staging path. It has no install, load, enable, start, or uninstall command. Foreground use and launchd activation require separate local approval. See [Background service](background-service.md).
 
+## Optional quota guard
+
+The disabled-by-default quota guard binds an exact task set and remaining-quota threshold to a separate approval. A due cycle pauses an active goal before it interrupts a pinned turn. It resumes only after the tripped quota window proves a reset and both windows exceed the threshold plus hysteresis. Unknown task outcomes become `needs_review` and are never retried. See [Quota guard](quota-guard.md).
+
 ## Pause, stop, and recovery
 
 - `pause` blocks the next dispatch. An existing turn continues while quota checks remain safe.

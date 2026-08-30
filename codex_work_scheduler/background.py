@@ -20,6 +20,7 @@ _HOLD_ISSUES = frozenset(
         "LEASE_ACTIVE",
         "NO_ELIGIBLE_JOB",
         "NOT_BEFORE_PENDING",
+        "QUOTA_GUARD_HELD",
         "RECONCILE_REQUIRED",
         "RUN_ACTIVE",
         "WORK_AUTHORIZATION_MISSING",
@@ -227,6 +228,20 @@ class BackgroundSupervisor:
             "reason_code": reason_code,
         }
 
+    def _contain_guards_without_signal(self) -> None:
+        """Best-effort containment before the controller is safety-stopped."""
+        if not self.config["quota_guard"]["enabled"]:
+            return
+        try:
+            self.controller.quota_guard_cycle(
+                signal_available=False,
+                allow_resume=False,
+            )
+        except Exception:
+            # The subsequent safety stop remains mandatory. The guard cycle
+            # records NEEDS_REVIEW when it can establish a durable outcome.
+            pass
+
     def run_once(self, *, cycle_number: int) -> Dict[str, Any]:
         if self._lease is None:
             raise SchedulerError("SERVICE_LEASE_MISSING", "The foreground service has no lease")
@@ -282,9 +297,11 @@ class BackgroundSupervisor:
         except SchedulerError as exc:
             self._failure_count += 1
             reason_code = exc.code if exc.code in _SIGNAL_ISSUES else "SIGNAL_INVALID"
+            self._contain_guards_without_signal()
             return self._safety_stop(reason_code, failure_count=self._failure_count)
         except Exception:
             self._failure_count += 1
+            self._contain_guards_without_signal()
             return self._safety_stop("PROBE_UNAVAILABLE", failure_count=self._failure_count)
 
         status = self.controller.status()
@@ -295,10 +312,17 @@ class BackgroundSupervisor:
         )
         if signal_reasons:
             self._failure_count += 1
+            self._contain_guards_without_signal()
             return self._safety_stop(
                 signal_reasons[0], failure_count=self._failure_count
             )
         self._failure_count = 0
+        try:
+            guard_result = self.controller.quota_guard_cycle()
+        except SchedulerError as exc:
+            return self._safety_stop(exc.code, failure_count=1)
+        except Exception:
+            return self._safety_stop("QUOTA_GUARD_UNAVAILABLE", failure_count=1)
         preflight = self.controller.dispatch_preflight()
         safety_issues = sorted(set(preflight["issues"]) - _HOLD_ISSUES)
         if safety_issues:
@@ -333,6 +357,7 @@ class BackgroundSupervisor:
             except SchedulerError:
                 return self._safety_stop("NOTIFICATION_DELIVERY_FAILED", failure_count=1)
             return {
+                "quota_guard": guard_result,
                 "issues": issues,
                 "next_delay_seconds": delay,
                 "outcome": "hold",
@@ -420,6 +445,7 @@ class BackgroundSupervisor:
             return self._safety_stop("NOTIFICATION_DELIVERY_FAILED", failure_count=1)
         return {
             "dispatch": result,
+            "quota_guard": guard_result,
             "next_delay_seconds": self._delay(0),
             "outcome": event_type,
         }

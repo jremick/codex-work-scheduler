@@ -14,7 +14,7 @@ This plan records the completed public-alpha release evidence and the approval b
 - The background supervisor and launchd staging surface are integrated. The example remains disabled, and the repository has no launchd installation or activation command.
 - Runtime state, local configuration, SQLite files, logs, environment files, approvals, and rendered plists are ignored.
 - The runtime uses only Python's standard library.
-- The combined local suite contains 87 tests, including fake App Server, supervisor, notification, recovery, redaction, and launchd staging coverage.
+- The combined local suite contains 132 tests, including fake App Server, supervisor, quota guard, notification, recovery, redaction, and launchd staging coverage.
 - GitHub Actions pass on `main` for Python 3.9, 3.11, and 3.13, plus the separate `Public safety` job.
 - Public distribution is a source checkout and GitHub-generated source archive. No package or installer is published.
 
@@ -93,4 +93,4 @@ The maintainer approved the bounded public cut for commit `338848945f9eb69865fc0
 
 ## Deferred beyond public alpha
 
-A launchd installer or activation, network API, external notifications, human UI, new authentication, automatic retry, paid-credit fallback, packaged distribution, stable migrations, and multi-platform support are not part of the public-alpha gate.
+A launchd installer or activation, network API, external notifications, human UI, new authentication, automatic retry of uncertain work, paid-credit fallback, packaged distribution, stable migrations, and multi-platform support are not part of the public-alpha gate.

@@ -148,12 +148,18 @@ The optional foreground supervisor can poll the queue and run already-approved w
 
 Background activation is an advanced, separately approved local operation. Start with the agent-managed foreground workflow above. See [Background service](docs/background-service.md) when you are ready to evaluate continuous operation.
 
+## Quota-based task control
+
+The optional quota guard can inventory an exact set of active Codex tasks, pause and interrupt them when either remaining-quota window reaches a selected threshold, and resume only after a confirmed reset, hysteresis margin, safe paid-credit signal, and unchanged guard-owned goal pause. It pauses an active `/goal` before interrupting its turn and restores only a goal that still carries the guard's ownership token.
+
+Quota guard and the background supervisor are disabled in the example. Their activation, task-control canary, and writer-ownership check require a separate reviewed plan. See [Quota guard](docs/quota-guard.md).
+
 ## Current limits
 
 - macOS and Python 3.9 or later are the verified baseline.
 - Distribution is a source checkout; there is no package or installer.
 - Config files, commands, SQLite state, and App Server integration may change during alpha.
-- The project has no network API, graphical interface, external notification service, automatic retry, or paid-credit fallback.
+- The project has no network API, graphical interface, external notification service, automatic retry of uncertain work, or paid-credit fallback.
 - Live launchd installation and reboot behavior are not part of the public-alpha claim.
 
 ## Documentation
@@ -163,6 +169,7 @@ Background activation is an advanced, separately approved local operation. Start
 - [Operating model](docs/operating-model.md) - detailed state machine, dispatch, and recovery
 - [Compatibility](docs/compatibility.md) - verified environments and current limits
 - [Background service](docs/background-service.md) - optional supervisor and launchd boundary
+- [Quota guard](docs/quota-guard.md) - quota-based containment and reset-confirmed task resume
 - [Changelog](CHANGELOG.md) - public-alpha changes and safety notes
 
 ## Support, security, and contributions

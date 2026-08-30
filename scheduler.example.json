@@ -18,6 +18,9 @@
     "queue.read",
     "queue.local.write",
     "quota.read",
+    "quota_guard.read",
+    "quota_guard.local.write",
+    "quota_guard.thread.control",
     "reconcile.local",
     "simulate.local",
     "live_test.dispatch",
@@ -55,6 +58,13 @@
     "jitter_ratio": 0.2,
     "service_lease_seconds": 600,
     "notification_path": ".scheduler/notifications.jsonl"
+  },
+  "quota_guard": {
+    "enabled": false,
+    "min_check_interval_seconds": 60,
+    "max_check_interval_seconds": 3600,
+    "max_targets": 100,
+    "resume_hysteresis_percent": 1.0
   },
   "policy": {
     "schema_version": "1",

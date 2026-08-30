@@ -21,6 +21,14 @@ from .errors import SchedulerError
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
+_DEFAULT_QUOTA_GUARD_CONFIG = {
+    "enabled": False,
+    "min_check_interval_seconds": 60,
+    "max_check_interval_seconds": 3600,
+    "max_targets": 100,
+    "resume_hysteresis_percent": 1.0,
+}
+
 
 def _object(value: Any, name: str) -> Dict[str, Any]:
     if not isinstance(value, dict):
@@ -142,7 +150,7 @@ def validate_config(value: Any) -> Dict[str, Any]:
             "workspace_roots",
             "live_test",
         },
-        {"background", "dispatch"},
+        {"background", "dispatch", "quota_guard"},
     )
     _version(data, "configuration")
     if data["dry_run"] is not True:
@@ -202,6 +210,22 @@ def validate_config(value: Any) -> Dict[str, Any]:
             },
         )
     )
+    quota_guard = validate_quota_guard_config(
+        data.get("quota_guard", dict(_DEFAULT_QUOTA_GUARD_CONFIG))
+    )
+    if quota_guard["enabled"]:
+        required_guard_capabilities = {
+            "quota_guard.read",
+            "quota_guard.local.write",
+            "quota_guard.thread.control",
+        }
+        missing_guard_capabilities = sorted(required_guard_capabilities - set(capabilities))
+        if missing_guard_capabilities:
+            raise SchedulerError(
+                "CAPABILITY_DENIED",
+                "Enabled quota guard requires its fixed local capabilities",
+                details={"missing": missing_guard_capabilities},
+            )
     return {
         "schema_version": SCHEMA_VERSION,
         "dry_run": True,
@@ -214,6 +238,178 @@ def validate_config(value: Any) -> Dict[str, Any]:
         "live_test": live_test,
         "dispatch": dispatch,
         "background": background,
+        "quota_guard": quota_guard,
+    }
+
+
+def validate_quota_guard_config(value: Any) -> Dict[str, Any]:
+    data = _object(value, "quota_guard")
+    _exact_keys(
+        data,
+        "quota_guard",
+        {
+            "enabled",
+            "min_check_interval_seconds",
+            "max_check_interval_seconds",
+            "max_targets",
+            "resume_hysteresis_percent",
+        },
+    )
+    if not isinstance(data["enabled"], bool):
+        raise SchedulerError("SCHEMA_INVALID", "quota_guard.enabled must be a boolean")
+    min_interval = _integer(
+        data["min_check_interval_seconds"],
+        "quota_guard.min_check_interval_seconds",
+        60,
+        3600,
+    )
+    max_interval = _integer(
+        data["max_check_interval_seconds"],
+        "quota_guard.max_check_interval_seconds",
+        60,
+        86400,
+    )
+    if max_interval < min_interval:
+        raise SchedulerError(
+            "SCHEMA_INVALID",
+            "quota_guard.max_check_interval_seconds must be at least the minimum",
+        )
+    return {
+        "enabled": data["enabled"],
+        "min_check_interval_seconds": min_interval,
+        "max_check_interval_seconds": max_interval,
+        "max_targets": _integer(data["max_targets"], "quota_guard.max_targets", 1, 100),
+        "resume_hysteresis_percent": _number(
+            data["resume_hysteresis_percent"],
+            "quota_guard.resume_hysteresis_percent",
+            0.1,
+            20.0,
+        ),
+    }
+
+
+def _quota_guard_plan_limits(
+    config: Any = None, *, limits: Any = None
+) -> Dict[str, int]:
+    if config is not None and limits is not None:
+        raise SchedulerError(
+            "SCHEMA_INVALID",
+            "Provide either config or limits, not both",
+        )
+    supplied = limits if limits is not None else config
+    if supplied is None:
+        raise SchedulerError(
+            "SCHEMA_INVALID",
+            "quota_guard plan validation requires config or limits",
+        )
+    if not isinstance(supplied, Mapping):
+        raise SchedulerError("SCHEMA_INVALID", "quota_guard config or limits must be an object")
+
+    # Callers may pass the complete validated configuration, its quota_guard
+    # section, or a focused limits mapping.  A legacy complete configuration
+    # has no quota_guard section, so it receives the same safe defaults as
+    # validate_config.
+    if "quota_guard" in supplied:
+        supplied = supplied["quota_guard"]
+    elif (
+        "schema_version" in supplied
+        and "capabilities" in supplied
+        and not {
+            "min_check_interval_seconds",
+            "max_check_interval_seconds",
+            "max_targets",
+        }.intersection(supplied)
+    ):
+        supplied = _DEFAULT_QUOTA_GUARD_CONFIG
+    if not isinstance(supplied, Mapping):
+        raise SchedulerError("SCHEMA_INVALID", "quota_guard limits must be an object")
+
+    min_interval = _integer(
+        supplied.get("min_check_interval_seconds"),
+        "quota_guard.min_check_interval_seconds",
+        60,
+        3600,
+    )
+    max_interval = _integer(
+        supplied.get("max_check_interval_seconds"),
+        "quota_guard.max_check_interval_seconds",
+        60,
+        86400,
+    )
+    if max_interval < min_interval:
+        raise SchedulerError(
+            "SCHEMA_INVALID",
+            "quota_guard.max_check_interval_seconds must be at least the minimum",
+        )
+    max_targets = _integer(
+        supplied.get("max_targets"), "quota_guard.max_targets", 1, 100
+    )
+    return {
+        "min_check_interval_seconds": min_interval,
+        "max_check_interval_seconds": max_interval,
+        "max_targets": max_targets,
+    }
+
+
+def validate_quota_guard_plan(
+    value: Any, config: Any = None, *, limits: Any = None
+) -> Dict[str, Any]:
+    data = _object(value, "quota_guard_plan")
+    _exact_keys(
+        data,
+        "quota_guard_plan",
+        {
+            "schema_version",
+            "threshold_remaining_percent",
+            "check_interval_seconds",
+            "target_thread_ids",
+            "resume_non_goal_threads",
+        },
+    )
+    _version(data, "quota_guard_plan")
+    plan_limits = _quota_guard_plan_limits(config, limits=limits)
+
+    target_thread_ids = data["target_thread_ids"]
+    if not isinstance(target_thread_ids, list):
+        raise SchedulerError(
+            "SCHEMA_INVALID", "quota_guard_plan.target_thread_ids must be an array"
+        )
+    if not 1 <= len(target_thread_ids) <= plan_limits["max_targets"]:
+        raise SchedulerError(
+            "SCHEMA_INVALID",
+            "quota_guard_plan.target_thread_ids count is outside its permitted range",
+            details={"maximum": plan_limits["max_targets"], "minimum": 1},
+        )
+    normalized_targets = [
+        validate_identifier(item, "quota_guard_plan target_thread_id")
+        for item in target_thread_ids
+    ]
+    if len(normalized_targets) != len(set(normalized_targets)):
+        raise SchedulerError(
+            "SCHEMA_INVALID",
+            "quota_guard_plan.target_thread_ids must not contain duplicates",
+        )
+    if not isinstance(data["resume_non_goal_threads"], bool):
+        raise SchedulerError(
+            "SCHEMA_INVALID",
+            "quota_guard_plan.resume_non_goal_threads must be a boolean",
+        )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "threshold_remaining_percent": _number(
+            data["threshold_remaining_percent"],
+            "quota_guard_plan.threshold_remaining_percent",
+            0.0,
+            100.0,
+        ),
+        "check_interval_seconds": _integer(
+            data["check_interval_seconds"],
+            "quota_guard_plan.check_interval_seconds",
+            plan_limits["min_check_interval_seconds"],
+            plan_limits["max_check_interval_seconds"],
+        ),
+        "target_thread_ids": sorted(normalized_targets),
+        "resume_non_goal_threads": data["resume_non_goal_threads"],
     }
 
 
