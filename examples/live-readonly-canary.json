@@ -1,0 +1,23 @@
+{
+  "schema_version": "1",
+  "job": {
+    "schema_version": "1",
+    "job_id": "live-readonly-canary-20260830-002",
+    "work_ref": "scheduler-live-readonly-canary",
+    "priority": 100,
+    "expected_usage": {
+      "five_hour_percent": 0.5,
+      "weekly_percent": 0.1
+    }
+  },
+  "objective": "Read README.md and docs/operating-model.md in this repository. Do not modify files. Return a concise statement that identifies the documented controller phase, reserve policy, and paid-credit safety boundary.",
+  "execution": {
+    "cwd": ".",
+    "model": "gpt-5.6-luna",
+    "effort": "low",
+    "sandbox": "read_only",
+    "max_runtime_seconds": 60
+  },
+  "dependencies": [],
+  "not_before": null
+}

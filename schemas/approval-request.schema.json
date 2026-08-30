@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/approval-request-v1.json",
+  "title": "Unprivileged approval request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "request_id", "action", "scope_hash", "capability",
+    "created_at", "requested_approver", "suggested_ttl_seconds"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "request_id": {"$ref": "#/$defs/identifier"},
+    "action": {"$ref": "#/$defs/identifier"},
+    "scope_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "capability": {"type": "string", "minLength": 1},
+    "created_at": {"type": "number", "minimum": 0},
+    "requested_approver": {"$ref": "#/$defs/identifier"},
+    "suggested_ttl_seconds": {"type": "integer", "minimum": 60, "maximum": 86400}
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+  }
+}

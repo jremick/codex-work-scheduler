@@ -1,0 +1,23 @@
+{
+  "schema_version": "1",
+  "job": {
+    "schema_version": "1",
+    "job_id": "example-work-001",
+    "work_ref": "local-work-001",
+    "priority": 50,
+    "expected_usage": {
+      "five_hour_percent": 5,
+      "weekly_percent": 1
+    }
+  },
+  "objective": "Run the approved local repository task.",
+  "execution": {
+    "cwd": ".",
+    "model": "gpt-5.6-luna",
+    "effort": "low",
+    "sandbox": "workspace_write",
+    "max_runtime_seconds": 600
+  },
+  "dependencies": [],
+  "not_before": null
+}

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: macos-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile Python modules
+        run: python3 -m py_compile codex_work_scheduler/*.py
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Validate tracked JSON
+        run: python3 scripts/check_json.py
+      - name: Validate local Markdown links
+        run: python3 scripts/check_local_links.py
+
+  public-safety:
+    name: Public safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Scan tracked files and history
+        run: python3 scripts/check_public_safety.py --history

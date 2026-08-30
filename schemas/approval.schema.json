@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/approval-v1.json",
+  "title": "Scoped approval v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "approval_id", "actor", "action", "scope_hash",
+    "capabilities", "granted_at", "expires_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "approval_id": {"$ref": "#/$defs/identifier"},
+    "actor": {"$ref": "#/$defs/identifier"},
+    "action": {"$ref": "#/$defs/identifier"},
+    "scope_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string"}
+    },
+    "granted_at": {"type": "number", "minimum": 0},
+    "expires_at": {"type": "number", "exclusiveMinimum": 0}
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/quota-snapshot-v3.json",
+  "title": "Account-bound normalized Codex quota snapshot v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "observed_at", "source", "profile_key", "limit_id",
+    "account_fingerprint", "account_type", "plan_type",
+    "credit_signal", "paid_credit_state", "spend_control_state",
+    "rate_limit_reached_type", "five_hour", "weekly"
+  ],
+  "properties": {
+    "schema_version": {"const": "3"},
+    "observed_at": {"type": "number", "minimum": 0},
+    "source": {"enum": ["codex_app_server", "fixture"]},
+    "profile_key": {"type": "string"},
+    "limit_id": {"type": "string"},
+    "account_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "account_type": {"type": "string"},
+    "plan_type": {"type": ["string", "null"]},
+    "credit_signal": {"enum": ["absent", "present", "unknown"]},
+    "paid_credit_state": {"enum": ["available", "unavailable", "unknown"]},
+    "spend_control_state": {"enum": ["reached", "not_reached", "unknown"]},
+    "rate_limit_reached_type": {"type": ["string", "null"]},
+    "five_hour": {"$ref": "#/$defs/window300"},
+    "weekly": {"$ref": "#/$defs/window10080"}
+  },
+  "$defs": {
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["window_duration_minutes", "used_percent", "remaining_percent", "resets_at"],
+      "properties": {
+        "window_duration_minutes": {"type": "integer"},
+        "used_percent": {"type": "number", "minimum": 0, "maximum": 100},
+        "remaining_percent": {"type": "number", "minimum": 0, "maximum": 100},
+        "resets_at": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "window300": {
+      "allOf": [
+        {"$ref": "#/$defs/window"},
+        {"properties": {"window_duration_minutes": {"const": 300}}}
+      ]
+    },
+    "window10080": {
+      "allOf": [
+        {"$ref": "#/$defs/window"},
+        {"properties": {"window_duration_minutes": {"const": 10080}}}
+      ]
+    }
+  }
+}

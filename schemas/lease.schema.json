@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/lease-v1.json",
+  "title": "Simulation lease v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["lease_id", "job_id", "owner", "state", "acquired_at", "expires_at", "completed_at"],
+  "properties": {
+    "lease_id": {"type": "string", "minLength": 1},
+    "job_id": {"type": "string", "minLength": 1},
+    "owner": {"type": "string", "minLength": 1},
+    "state": {"enum": ["active", "completed", "completed_overrun", "failed", "expired"]},
+    "acquired_at": {"type": "number", "minimum": 0},
+    "expires_at": {"type": "number", "minimum": 0},
+    "completed_at": {"type": ["number", "null"], "minimum": 0}
+  }
+}

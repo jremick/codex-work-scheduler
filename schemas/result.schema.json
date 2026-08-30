@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/result-envelope-v1.json",
+  "title": "CLI result envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "command", "ok", "request_id", "result", "error"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "command": {"type": "string", "minLength": 1},
+    "ok": {"type": "boolean"},
+    "request_id": {"type": "string", "minLength": 1},
+    "result": {"type": ["object", "array", "string", "number", "boolean", "null"]},
+    "error": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "error.schema.json"}
+      ]
+    }
+  }
+}

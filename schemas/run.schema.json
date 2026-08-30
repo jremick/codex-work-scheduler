@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/run-v1.json",
+  "title": "Redacted monitored run v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id", "job_id", "kind", "state", "thread_id", "turn_id",
+    "started_at", "updated_at", "lease_expires_at", "completed_at", "stop_reason"
+  ],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "job_id": {"type": ["string", "null"]},
+    "kind": {"enum": ["canary", "work"]},
+    "state": {"enum": ["starting", "running", "succeeded", "failed", "interrupted", "blocked", "needs_review"]},
+    "thread_id": {"type": ["string", "null"]},
+    "turn_id": {"type": ["string", "null"]},
+    "started_at": {"type": "number", "minimum": 0},
+    "updated_at": {"type": "number", "minimum": 0},
+    "lease_expires_at": {"type": "number", "minimum": 0},
+    "completed_at": {"type": ["number", "null"], "minimum": 0},
+    "stop_reason": {"type": ["string", "null"]}
+  }
+}

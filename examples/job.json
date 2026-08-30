@@ -1,0 +1,17 @@
+{
+  "schema_version": "1",
+  "job_id": "example-job-001",
+  "work_ref": "local-approved-work-001",
+  "priority": 50,
+  "expected_usage": {
+    "five_hour_percent": 5,
+    "weekly_percent": 1
+  },
+  "simulation": {
+    "outcome": "success",
+    "actual_usage": {
+      "five_hour_percent": 5,
+      "weekly_percent": 1
+    }
+  }
+}

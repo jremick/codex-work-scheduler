@@ -1,0 +1,68 @@
+{
+  "schema_version": "1",
+  "dry_run": true,
+  "database_path": ".scheduler/state.sqlite",
+  "profile_key": "local-default",
+  "limit_id": "auto",
+  "capabilities": [
+    "audit.read",
+    "backlog.local.write",
+    "background.read",
+    "background.run",
+    "control.read",
+    "control.local.write",
+    "launchd.render",
+    "policy.read",
+    "policy.evaluate",
+    "policy.local.write",
+    "queue.read",
+    "queue.local.write",
+    "quota.read",
+    "reconcile.local",
+    "simulate.local",
+    "live_test.dispatch",
+    "monitor.read",
+    "monitor.local.write",
+    "notification.local.write",
+    "work.dispatch"
+  ],
+  "workspace_roots": ["."],
+  "live_test": {
+    "enabled": true,
+    "model": "gpt-5.6-luna",
+    "effort": "low",
+    "max_runtime_seconds": 30,
+    "poll_interval_seconds": 2,
+    "expected_usage": {
+      "five_hour_percent": 0.5,
+      "weekly_percent": 0.1
+    },
+    "require_paid_credits_unavailable": true
+  },
+  "dispatch": {
+    "enabled": true,
+    "poll_interval_seconds": 5,
+    "require_paid_credits_unavailable": true,
+    "credit_verification_mode": "operator_attested_subscription_only",
+    "deny_hooks": true,
+    "deny_mcp_servers": true,
+    "deny_apps": true
+  },
+  "background": {
+    "enabled": false,
+    "poll_interval_seconds": 30,
+    "max_backoff_seconds": 300,
+    "jitter_ratio": 0.2,
+    "service_lease_seconds": 600,
+    "notification_path": ".scheduler/notifications.jsonl"
+  },
+  "policy": {
+    "schema_version": "1",
+    "five_hour_reserve_percent": 10,
+    "weekly_reserve_percent": 10,
+    "estimate_multiplier": 1.25,
+    "max_snapshot_age_seconds": 300,
+    "lease_seconds": 300,
+    "max_concurrency": 1
+  }
+}

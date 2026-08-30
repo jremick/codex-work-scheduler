@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/service-status-v1.json",
+  "title": "Background supervisor status v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["configured", "lease"],
+  "properties": {
+    "configured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled", "jitter_ratio", "max_backoff_seconds",
+        "poll_interval_seconds", "service_lease_seconds"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "jitter_ratio": {"type": "number", "minimum": 0, "maximum": 0.5},
+        "max_backoff_seconds": {"type": "integer", "minimum": 5, "maximum": 3600},
+        "poll_interval_seconds": {"type": "integer", "minimum": 5, "maximum": 3600},
+        "service_lease_seconds": {"type": "integer", "minimum": 30, "maximum": 7200}
+      }
+    },
+    "lease": {
+      "type": "object",
+      "required": ["present", "running"],
+      "properties": {
+        "acquired_at": {"type": "number", "minimum": 0},
+        "expires_at": {"type": "number", "minimum": 0},
+        "heartbeat_at": {"type": "number", "minimum": 0},
+        "lease_id": {"type": "string", "minLength": 1},
+        "owner_prefix": {"type": "string", "minLength": 1, "maxLength": 12},
+        "present": {"type": "boolean"},
+        "released_at": {"type": ["number", "null"], "minimum": 0},
+        "running": {"type": "boolean"},
+        "state": {"enum": ["active", "released"]}
+      }
+    }
+  }
+}

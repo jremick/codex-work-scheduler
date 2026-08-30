@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/work-package-v1.json",
+  "title": "Proposed Codex work package v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "job", "objective", "execution", "dependencies", "not_before"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "job": {
+      "allOf": [
+        {"$ref": "job.schema.json"},
+        {"not": {"required": ["simulation"]}}
+      ]
+    },
+    "objective": {"type": "string", "minLength": 1, "maxLength": 8000},
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cwd", "model", "effort", "sandbox", "max_runtime_seconds"],
+      "properties": {
+        "cwd": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "model": {"type": "string", "minLength": 1, "maxLength": 128},
+        "effort": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "sandbox": {"enum": ["read_only", "workspace_write"]},
+        "max_runtime_seconds": {"type": "integer", "minimum": 10, "maximum": 86400}
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+    },
+    "not_before": {"type": ["number", "null"], "minimum": 0}
+  }
+}

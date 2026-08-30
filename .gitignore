@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+coverage/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.sqlite
+*.sqlite-*
+.scheduler/
+scheduler.local.json
+*.approval.json

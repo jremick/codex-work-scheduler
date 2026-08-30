@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/notification-event-v1.json",
+  "title": "Redacted local notification event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_id", "event_type", "occurred_at",
+    "reason_code", "subject", "details"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "event_id": {"$ref": "#/$defs/identifier"},
+    "event_type": {
+      "enum": ["completion", "dispatch", "hold", "needs_review", "safety_stop", "signal_loss"]
+    },
+    "occurred_at": {"type": "number", "minimum": 0},
+    "reason_code": {"anyOf": [{"$ref": "#/$defs/identifier"}, {"type": "null"}]},
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": {"anyOf": [{"$ref": "#/$defs/identifier"}, {"type": "null"}]},
+        "kind": {"enum": ["controller", "job", "run", "service"]}
+      }
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "controller_mode": {"$ref": "#/$defs/scalar"},
+        "failure_count": {"$ref": "#/$defs/scalar"},
+        "job_state": {"$ref": "#/$defs/scalar"},
+        "lease_recovered": {"$ref": "#/$defs/scalar"},
+        "next_delay_seconds": {"$ref": "#/$defs/scalar"},
+        "package_hash": {"$ref": "#/$defs/scalar"},
+        "run_id": {"$ref": "#/$defs/scalar"},
+        "run_state": {"$ref": "#/$defs/scalar"}
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "scalar": {"type": ["boolean", "number", "string"]}
+  }
+}

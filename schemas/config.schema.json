@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/config-v1.json",
+  "title": "Codex Work Scheduler configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "dry_run", "database_path", "profile_key", "limit_id", "capabilities", "policy", "workspace_roots", "live_test"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "dry_run": {"const": true},
+    "database_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+"
+    },
+    "profile_key": {"$ref": "#/$defs/identifier"},
+    "limit_id": {"$ref": "#/$defs/identifier"},
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "audit.read", "backlog.local.write", "background.read", "background.run",
+          "control.read", "control.local.write", "launchd.render", "policy.read",
+          "policy.evaluate", "policy.local.write", "queue.read", "queue.local.write",
+          "quota.read", "reconcile.local", "simulate.local", "live_test.dispatch",
+          "monitor.read", "monitor.local.write", "notification.local.write", "work.dispatch"
+        ]
+      }
+    },
+    "policy": {"$ref": "policy.schema.json"},
+    "workspace_roots": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 1024}
+    },
+    "live_test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "model", "effort", "max_runtime_seconds", "poll_interval_seconds", "expected_usage", "require_paid_credits_unavailable"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "model": {"type": "string", "minLength": 1, "maxLength": 128},
+        "effort": {"$ref": "#/$defs/identifier"},
+        "max_runtime_seconds": {"type": "integer", "minimum": 10, "maximum": 300},
+        "poll_interval_seconds": {"type": "integer", "minimum": 1, "maximum": 30},
+        "expected_usage": {"$ref": "job.schema.json#/$defs/usage"},
+        "require_paid_credits_unavailable": {"const": true}
+      }
+    },
+    "dispatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled", "poll_interval_seconds", "require_paid_credits_unavailable",
+        "deny_hooks", "deny_mcp_servers", "deny_apps"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "poll_interval_seconds": {"type": "integer", "minimum": 1, "maximum": 30},
+        "require_paid_credits_unavailable": {"const": true},
+        "credit_verification_mode": {
+          "enum": ["machine_only", "operator_attested_subscription_only"]
+        },
+        "deny_hooks": {"const": true},
+        "deny_mcp_servers": {"const": true},
+        "deny_apps": {"const": true}
+      }
+    },
+    "background": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled", "poll_interval_seconds", "max_backoff_seconds", "jitter_ratio",
+        "service_lease_seconds", "notification_path"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "poll_interval_seconds": {"type": "integer", "minimum": 5, "maximum": 3600},
+        "max_backoff_seconds": {"type": "integer", "minimum": 5, "maximum": 3600},
+        "jitter_ratio": {"type": "number", "minimum": 0, "maximum": 0.5},
+        "service_lease_seconds": {"type": "integer", "minimum": 30, "maximum": 7200},
+        "notification_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+  }
+}

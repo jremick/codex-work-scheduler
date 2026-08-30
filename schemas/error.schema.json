@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/error-v1.json",
+  "title": "CLI error v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "message", "retryable", "details"],
+  "properties": {
+    "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]+$"},
+    "message": {"type": "string", "minLength": 1},
+    "retryable": {"type": "boolean"},
+    "details": {"type": "object"}
+  }
+}

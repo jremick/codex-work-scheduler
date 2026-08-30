@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/policy-v1.json",
+  "title": "Codex Work Scheduler reserve policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "five_hour_reserve_percent", "weekly_reserve_percent",
+    "estimate_multiplier", "max_snapshot_age_seconds", "lease_seconds", "max_concurrency"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "five_hour_reserve_percent": {"type": "number", "minimum": 0, "maximum": 100},
+    "weekly_reserve_percent": {"type": "number", "minimum": 0, "maximum": 100},
+    "estimate_multiplier": {"type": "number", "minimum": 1, "maximum": 10},
+    "max_snapshot_age_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
+    "lease_seconds": {"type": "integer", "minimum": 5, "maximum": 3600},
+    "max_concurrency": {"const": 1}
+  }
+}

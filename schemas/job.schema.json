@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/job-v1.json",
+  "title": "Queue job v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "job_id", "work_ref", "priority", "expected_usage"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "job_id": {"$ref": "#/$defs/identifier"},
+    "work_ref": {"$ref": "#/$defs/identifier"},
+    "priority": {"type": "integer", "minimum": 0, "maximum": 100},
+    "expected_usage": {"$ref": "#/$defs/usage"},
+    "simulation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "actual_usage"],
+      "properties": {
+        "outcome": {"enum": ["success", "failure"]},
+        "actual_usage": {"$ref": "#/$defs/usage"}
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["five_hour_percent", "weekly_percent"],
+      "properties": {
+        "five_hour_percent": {"type": "number", "minimum": 0, "maximum": 100},
+        "weekly_percent": {"type": "number", "minimum": 0, "maximum": 100}
+      }
+    }
+  }
+}
