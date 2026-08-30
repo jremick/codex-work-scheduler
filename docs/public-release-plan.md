@@ -15,7 +15,7 @@ This plan records release evidence and the final approval boundary. It does not 
 - Runtime state, local configuration, SQLite files, logs, environment files, approvals, and rendered plists are ignored.
 - The runtime uses only Python's standard library.
 - The combined local suite contains 87 tests, including fake App Server, supervisor, notification, recovery, redaction, and launchd staging coverage.
-- Private GitHub Actions must pass on the sanitized `main` commit for Python 3.9, 3.11, and 3.13, plus the separate `Public safety` job.
+- Private GitHub Actions pass on sanitized `main` for Python 3.9, 3.11, and 3.13, plus the separate `Public safety` job.
 - Public distribution will be a source checkout and GitHub-generated source archive. No package or installer will be published.
 
 Live GitHub read-back on 2026-08-30 confirms:
@@ -76,7 +76,7 @@ Do not announce the project in this window. If a material leak, missing license,
 - [x] Background supervisor integrated, disabled by default, and documented without launchd activation claims.
 - [x] Current official Codex interface review completed on the release candidate.
 - [x] Clean-checkout quick start and plist staging checks passed on the integrated release candidate.
-- [ ] GitHub Actions passed on sanitized private `main`; actual check contexts recorded.
+- [x] GitHub Actions passed on sanitized private `main`; actual check contexts recorded.
 - [x] Tracked-file, snapshot-history, and public-surface hygiene checks passed on the private release candidate.
 - [x] Apache-2.0 detection and approved private-safe metadata read back from GitHub.
 - [ ] Public security settings and `main` protection applied and read back after visibility changes.
