@@ -4,7 +4,7 @@ Status: **Stage 2 - Public Alpha**
 
 Target: **Stage 3 - Public Beta**
 
-Last reviewed: **2026-08-30**
+Last reviewed: **2026-08-31**
 
 This plan records the completed public-alpha release evidence and the approval boundary used for the cut. It does not authorize a future release, package publication, authentication change, or announcement.
 
@@ -14,7 +14,7 @@ This plan records the completed public-alpha release evidence and the approval b
 - The background supervisor and launchd staging surface are integrated. The example remains disabled, and the repository has no launchd installation or activation command.
 - Runtime state, local configuration, SQLite files, logs, environment files, approvals, and rendered plists are ignored.
 - The runtime uses only Python's standard library.
-- The combined local suite contains 132 tests, including fake App Server, supervisor, quota guard, notification, recovery, redaction, and launchd staging coverage.
+- The `v0.6.0-alpha.1` release suite contained 87 tests, including fake App Server, supervisor, notification, recovery, redaction, and launchd staging coverage.
 - GitHub Actions pass on `main` for Python 3.9, 3.11, and 3.13, plus the separate `Public safety` job.
 - Public distribution is a source checkout and GitHub-generated source archive. No package or installer is published.
 
@@ -29,6 +29,12 @@ Live post-release GitHub read-back on 2026-08-30 confirms:
 - Secret scanning, push protection, vulnerability alerts, and private vulnerability reporting are enabled. The secret-scanning alert count was zero at the cut.
 - Classic protection on `main` requires the four observed GitHub Actions checks with strict freshness and conversation resolution. Force pushes and branch deletion are blocked. Administrator emergency bypass remains available for the solo maintainer.
 - Dependabot security updates and CodeQL remain deferred because this source-only standard-library project has no third-party package manifest. Projects, Wiki, and Discussions remain disabled.
+
+## Next alpha release candidate
+
+`v0.7.0-alpha.1` adds the disabled-by-default quota guard. The candidate contains 132 local tests, retains source-only distribution, and does not activate background operation or task control. Publication requires the protected pull request checks, exact merged commit read-back, an annotated tag on that commit, and a GitHub prerelease with no custom assets.
+
+The live task-control canary is intentionally separate from source publication. Until that canary is approved and passes, the compatibility claim remains synthetic App Server coverage only.
 
 ## Interface and support boundary
 
