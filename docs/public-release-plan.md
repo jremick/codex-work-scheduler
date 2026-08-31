@@ -14,14 +14,14 @@ This plan records the completed public-alpha release evidence and the approval b
 - The background supervisor and launchd staging surface are integrated. The example remains disabled, and the repository has no launchd installation or activation command.
 - Runtime state, local configuration, SQLite files, logs, environment files, approvals, and rendered plists are ignored.
 - The runtime uses only Python's standard library.
-- The `v0.6.0-alpha.1` release suite contained 87 tests, including fake App Server, supervisor, notification, recovery, redaction, and launchd staging coverage.
+- The `v0.7.0-alpha.1` release suite contains 132 tests, including quota-guard inventory, containment, reset proof, guarded `/goal` resume, task-control ambiguity, controller mode, and dispatch-race coverage.
 - GitHub Actions pass on `main` for Python 3.9, 3.11, and 3.13, plus the separate `Public safety` job.
 - Public distribution is a source checkout and GitHub-generated source archive. No package or installer is published.
 
-Live post-release GitHub read-back on 2026-08-30 confirms:
+Live post-release GitHub read-back on 2026-08-31 confirms:
 
 - The repository is public and `main` is the default branch.
-- Annotated tag `v0.6.0-alpha.1` targets commit `338848945f9eb69865fc00deec7632a9816fe759`. The matching GitHub release is published as a prerelease with no custom assets.
+- Annotated tag `v0.7.0-alpha.1` targets merge commit `58ebc90450adb6a5fc6b32eef5505b046a648a36`. The matching GitHub release is published as a prerelease with no custom assets.
 - The alpha release retains only the sanitized release history. The predecessor repository remains a separate private read-only archive.
 - GitHub detects Apache-2.0.
 - The approved description and eight topics are present; the homepage is empty.
@@ -30,9 +30,9 @@ Live post-release GitHub read-back on 2026-08-30 confirms:
 - Classic protection on `main` requires the four observed GitHub Actions checks with strict freshness and conversation resolution. Force pushes and branch deletion are blocked. Administrator emergency bypass remains available for the solo maintainer.
 - Dependabot security updates and CodeQL remain deferred because this source-only standard-library project has no third-party package manifest. Projects, Wiki, and Discussions remain disabled.
 
-## Next alpha release candidate
+## Current quota guard alpha
 
-`v0.7.0-alpha.1` adds the disabled-by-default quota guard. The candidate contains 132 local tests, retains source-only distribution, and does not activate background operation or task control. Publication requires the protected pull request checks, exact merged commit read-back, an annotated tag on that commit, and a GitHub prerelease with no custom assets.
+`v0.7.0-alpha.1` adds the disabled-by-default quota guard. The protected pull request and post-merge checks passed, the annotated tag targets the exact verified merge commit, and the GitHub prerelease has no custom assets. The release retains source-only distribution and does not activate background operation or task control.
 
 The live task-control canary is intentionally separate from source publication. Until that canary is approved and passes, the compatibility claim remains synthetic App Server coverage only.
 
@@ -95,7 +95,9 @@ Do not announce the project in this window. If a material leak, missing license,
 
 ## Completed release authorization
 
-The maintainer approved the bounded public cut for commit `338848945f9eb69865fc00deec7632a9816fe759` and tag `v0.6.0-alpha.1`. The [GitHub alpha prerelease](https://github.com/jremick/codex-work-scheduler/releases/tag/v0.6.0-alpha.1) uses only GitHub-generated source archives. No package was published and no announcement was made.
+The maintainer approved the bounded quota-guard alpha cut for merge commit `58ebc90450adb6a5fc6b32eef5505b046a648a36` and tag `v0.7.0-alpha.1`. The [GitHub alpha prerelease](https://github.com/jremick/codex-work-scheduler/releases/tag/v0.7.0-alpha.1) uses only GitHub-generated source archives. No package was published and no announcement was made.
+
+The prior `v0.6.0-alpha.1` prerelease remains available as the initial public-alpha baseline.
 
 ## Deferred beyond public alpha
 
