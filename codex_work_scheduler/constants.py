@@ -2,7 +2,7 @@
 
 SCHEMA_VERSION = "1"
 SNAPSHOT_SCHEMA_VERSION = "3"
-APP_VERSION = "0.6.0-alpha.1"
+APP_VERSION = "0.7.0-alpha.1"
 
 FIVE_HOUR_MINUTES = 300
 WEEKLY_MINUTES = 10_080
@@ -26,6 +26,9 @@ LOCAL_DRY_RUN_CAPABILITIES = frozenset(
         "queue.read",
         "queue.local.write",
         "quota.read",
+        "quota_guard.read",
+        "quota_guard.local.write",
+        "quota_guard.thread.control",
         "reconcile.local",
         "simulate.local",
         "work.dispatch",
@@ -61,6 +64,20 @@ MONITOR_OUTBOUND_ALLOWLIST = frozenset(
         "initialize",
         "initialized",
         "thread/read",
+    }
+)
+
+QUOTA_GUARD_OUTBOUND_ALLOWLIST = frozenset(
+    {
+        "initialize",
+        "initialized",
+        "thread/list",
+        "thread/read",
+        "thread/goal/get",
+        "thread/goal/set",
+        "thread/resume",
+        "turn/interrupt",
+        "turn/start",
     }
 )
 

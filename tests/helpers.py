@@ -72,6 +72,13 @@ def config(database_path: str, **overrides: Any) -> Dict[str, Any]:
             "service_lease_seconds": 600,
             "notification_path": ".scheduler/notifications.jsonl",
         },
+        "quota_guard": {
+            "enabled": False,
+            "min_check_interval_seconds": 60,
+            "max_check_interval_seconds": 3600,
+            "max_targets": 100,
+            "resume_hysteresis_percent": 1.0,
+        },
     }
     value.update(overrides)
     return value

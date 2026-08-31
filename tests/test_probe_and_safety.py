@@ -257,12 +257,13 @@ class ProbeAndSafetyTests(unittest.TestCase):
             name for name, source in sources.items() if "import subprocess" in source
         )
         self.assertEqual(
-            subprocess_files, ["live_test.py", "monitor.py", "probe.py", "work_runner.py"]
+            subprocess_files,
+            ["live_test.py", "monitor.py", "probe.py", "thread_control.py", "work_runner.py"],
         )
         self.assertNotIn("turn/start", "\n".join(
             source
             for name, source in sources.items()
-            if name not in {"constants.py", "live_test.py", "work_runner.py"}
+            if name not in {"constants.py", "live_test.py", "thread_control.py", "work_runner.py"}
         ))
         self.assertEqual(CodexAppServerProbe.COMMAND, ("codex", "app-server", "--stdio"))
         self.assertEqual(CodexWorkRunner.COMMAND, ("codex", "app-server", "--stdio"))

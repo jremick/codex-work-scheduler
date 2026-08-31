@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-work-scheduler/schemas/quota-guard-plan-v1.json",
+  "title": "Quota guard plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "threshold_remaining_percent", "check_interval_seconds",
+    "target_thread_ids", "resume_non_goal_threads"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "threshold_remaining_percent": {"type": "number", "minimum": 0, "maximum": 100},
+    "check_interval_seconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+    "target_thread_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": {"$ref": "config.schema.json#/$defs/identifier"}
+    },
+    "resume_non_goal_threads": {"type": "boolean"}
+  }
+}

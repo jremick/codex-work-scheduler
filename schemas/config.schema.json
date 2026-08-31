@@ -24,7 +24,8 @@
           "audit.read", "backlog.local.write", "background.read", "background.run",
           "control.read", "control.local.write", "launchd.render", "policy.read",
           "policy.evaluate", "policy.local.write", "queue.read", "queue.local.write",
-          "quota.read", "reconcile.local", "simulate.local", "live_test.dispatch",
+          "quota.read", "quota_guard.read", "quota_guard.local.write", "quota_guard.thread.control",
+          "reconcile.local", "simulate.local", "live_test.dispatch",
           "monitor.read", "monitor.local.write", "notification.local.write", "work.dispatch"
         ]
       }
@@ -88,6 +89,21 @@
           "maxLength": 1024,
           "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+"
         }
+      }
+    },
+    "quota_guard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled", "min_check_interval_seconds", "max_check_interval_seconds",
+        "max_targets", "resume_hysteresis_percent"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "min_check_interval_seconds": {"type": "integer", "minimum": 60, "maximum": 3600},
+        "max_check_interval_seconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+        "max_targets": {"type": "integer", "minimum": 1, "maximum": 100},
+        "resume_hysteresis_percent": {"type": "number", "minimum": 0.1, "maximum": 20}
       }
     }
   },

@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument(
         "--action",
-        choices=("queue.submit", "queue.approve", "policy.set", "resume", "reconcile", "live-test.run"),
+        choices=("queue.submit", "queue.approve", "policy.set", "resume", "reconcile", "live-test.run", "quota-guard.arm"),
     )
     preflight.add_argument("--input-file")
 
@@ -81,7 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     approval_prepare.add_argument(
         "--action",
         required=True,
-        choices=("queue.submit", "queue.approve", "policy.set", "resume", "reconcile", "live-test.run"),
+        choices=("queue.submit", "queue.approve", "policy.set", "resume", "reconcile", "live-test.run", "quota-guard.arm"),
     )
     approval_prepare.add_argument("--input-file")
     approval_prepare.add_argument("--approver", default="operator")
@@ -162,6 +162,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     notification_list = notification_commands.add_parser("list")
     notification_list.add_argument("--limit", type=int, default=100)
+
+    quota_guard_parser = subparsers.add_parser("quota-guard")
+    quota_guard_commands = quota_guard_parser.add_subparsers(
+        dest="quota_guard_command", required=True, parser_class=JsonArgumentParser
+    )
+    quota_guard_commands.add_parser("inventory")
+    quota_guard_commands.add_parser("list")
+    quota_guard_status = quota_guard_commands.add_parser("status")
+    quota_guard_status.add_argument("--guard-id", required=True)
+    quota_guard_arm = quota_guard_commands.add_parser("arm")
+    quota_guard_arm.add_argument("--plan-file", required=True)
+    quota_guard_arm.add_argument("--approval-file", required=True)
+    quota_guard_arm.add_argument("--idempotency-key", required=True)
+    quota_guard_disarm = quota_guard_commands.add_parser("disarm")
+    quota_guard_disarm.add_argument("--guard-id", required=True)
+    quota_guard_disarm.add_argument("--idempotency-key", required=True)
 
     launchd_parser = subparsers.add_parser("launchd")
     launchd_commands = launchd_parser.add_subparsers(
@@ -244,6 +260,8 @@ def command_name(args: argparse.Namespace) -> str:
         return "service.%s" % args.service_command
     if args.command == "notifications":
         return "notifications.%s" % args.notification_command
+    if args.command == "quota-guard":
+        return "quota-guard.%s" % args.quota_guard_command
     if args.command == "launchd":
         return "launchd.%s" % args.launchd_command
     return args.command
@@ -418,6 +436,26 @@ def dispatch(args: argparse.Namespace, controller: Controller) -> Dict[str, Any]
         if args.limit < 1 or args.limit > 1000:
             raise SchedulerError("INVALID_ARGUMENT", "Notification limit must be between 1 and 1000")
         return {"events": controller.store.list_notifications(limit=args.limit)}
+    if args.command == "quota-guard":
+        if args.quota_guard_command == "inventory":
+            return controller.quota_guard_inventory()
+        if args.quota_guard_command == "list":
+            return controller.quota_guard_list()
+        if args.quota_guard_command == "status":
+            return controller.quota_guard_status(args.guard_id)
+        if args.quota_guard_command == "arm":
+            return controller.quota_guard_arm(
+                load_json_file(args.plan_file),
+                load_json_file(args.approval_file),
+                idempotency_key=args.idempotency_key,
+                actor=args.actor,
+            )
+        if args.quota_guard_command == "disarm":
+            return controller.quota_guard_disarm(
+                args.guard_id,
+                idempotency_key=args.idempotency_key,
+                actor=args.actor,
+            )
     if args.command == "launchd":
         controller._require_capability("launchd.render")
         if args.launchd_command == "check":

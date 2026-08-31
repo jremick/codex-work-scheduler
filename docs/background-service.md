@@ -112,7 +112,7 @@ LaunchAgent rollback is: stop the controller, boot out the exact user service, v
 
 ## Verification sources
 
-The implementation was checked against the installed `codex-cli 0.150.1` App Server JSON schemas and the official [Codex App Server protocol](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md). The supervisor continues to use stdio. It does not use the experimental websocket transport or the separate App Server daemon/proxy commands.
+The implementation was checked against the installed `codex-cli 0.150.1` App Server JSON schemas and the official [Codex App Server protocol](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md). Queue dispatch continues to use a fresh stdio App Server and does not use the experimental websocket transport. The optional quota guard uses the fixed local `codex app-server proxy` command so task-control requests reach the already-running App Server control socket.
 
 The launchd template follows the current local `launchd.plist(5)` contract and Apple's [Creating Launch Daemons and Agents](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) guidance. A LaunchAgent runs in the logged-in user's context; this design does not add a system LaunchDaemon.
 

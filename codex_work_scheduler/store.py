@@ -6,10 +6,26 @@ import secrets
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from .errors import SchedulerError
 from .util import canonical_json, new_id, payload_hash
+
+
+QUOTA_GUARD_SESSION_STATES = frozenset(
+    {"ARMED", "STOPPING", "HELD_QUOTA", "RESUMING", "NEEDS_REVIEW", "DISARMED"}
+)
+QUOTA_GUARD_TARGET_STATES = frozenset(
+    {
+        "MONITORING",
+        "STOPPING",
+        "HELD",
+        "RESUMING",
+        "RESUMED",
+        "COMPLETED",
+        "NEEDS_REVIEW",
+    }
+)
 
 
 class Store:
@@ -71,7 +87,6 @@ class Store:
 
     def migrate(self) -> None:
         statements = [
-            "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
             """CREATE TABLE IF NOT EXISTS controller (
                 singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                 mode TEXT NOT NULL,
@@ -199,8 +214,71 @@ class Store:
             "CREATE INDEX IF NOT EXISTS proposals_state_idx ON job_proposals(state, priority DESC, created_at ASC)",
             "CREATE INDEX IF NOT EXISTS runs_state_idx ON runs(state, updated_at DESC)",
             "CREATE INDEX IF NOT EXISTS notification_delivery_idx ON notification_events(delivered_at, sequence)",
+            """CREATE TABLE IF NOT EXISTS quota_guard_sessions (
+                guard_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                profile_key TEXT NOT NULL,
+                limit_id TEXT NOT NULL,
+                threshold_remaining_percent REAL NOT NULL,
+                resume_hysteresis_percent REAL NOT NULL,
+                check_interval_seconds INTEGER NOT NULL,
+                resume_non_goal_threads INTEGER NOT NULL,
+                approval_id TEXT NOT NULL REFERENCES approvals(approval_id),
+                plan_hash TEXT NOT NULL,
+                stop_snapshot_hash TEXT,
+                tripped_windows_json TEXT NOT NULL,
+                next_check_at REAL NOT NULL,
+                last_checked_at REAL,
+                reason_code TEXT,
+                revision INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )""",
+            """CREATE TABLE IF NOT EXISTS quota_guard_targets (
+                guard_id TEXT NOT NULL REFERENCES quota_guard_sessions(guard_id) ON DELETE CASCADE,
+                thread_id TEXT NOT NULL,
+                state TEXT NOT NULL,
+                original_status TEXT,
+                original_turn_id TEXT,
+                goal_was_active INTEGER NOT NULL,
+                goal_changed_by_guard INTEGER NOT NULL,
+                goal_pause_updated_at INTEGER,
+                reason_code TEXT,
+                revision INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY (guard_id, thread_id)
+            )""",
+            "CREATE INDEX IF NOT EXISTS quota_guard_sessions_due_idx "
+            "ON quota_guard_sessions(state, next_check_at)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS quota_guard_single_active_idx "
+            "ON quota_guard_sessions((1)) WHERE state <> 'DISARMED'",
+            "CREATE INDEX IF NOT EXISTS quota_guard_targets_state_idx "
+            "ON quota_guard_targets(guard_id, state)",
         ]
         with self.transaction() as connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            version_row = connection.execute(
+                "SELECT value FROM metadata WHERE key = 'schema_version'"
+            ).fetchone()
+            if version_row is None:
+                stored_version = 0
+            else:
+                try:
+                    stored_version = int(version_row["value"])
+                except (TypeError, ValueError) as exc:
+                    raise SchedulerError(
+                        "STATE_INVALID",
+                        "The database schema version is invalid",
+                    ) from exc
+            if stored_version > 2:
+                raise SchedulerError(
+                    "SCHEMA_UNSUPPORTED",
+                    "The database schema version is newer than this scheduler",
+                    details={"supported": [2], "found": stored_version},
+                )
             for statement in statements:
                 connection.execute(statement)
             run_columns = {
@@ -212,9 +290,25 @@ class Store:
                 )
             if "lease_owner" not in run_columns:
                 connection.execute("ALTER TABLE runs ADD COLUMN lease_owner TEXT")
-            connection.execute(
-                "INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', '1')"
-            )
+            guard_target_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(quota_guard_targets)"
+                ).fetchall()
+            }
+            if "goal_pause_updated_at" not in guard_target_columns:
+                connection.execute(
+                    "ALTER TABLE quota_guard_targets ADD COLUMN goal_pause_updated_at INTEGER"
+                )
+            if stored_version < 2:
+                connection.execute(
+                    "INSERT INTO metadata(key, value) VALUES ('schema_version', '2') "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+                )
+            if stored_version == 0:
+                connection.execute(
+                    "INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', '2')"
+                )
             connection.execute(
                 "INSERT OR IGNORE INTO metadata(key, value) VALUES ('account_fingerprint_key', ?)",
                 (secrets.token_hex(32),),
@@ -388,6 +482,24 @@ class Store:
                 "SELECT snapshot_json FROM quota_snapshots ORDER BY observed_at DESC, rowid DESC LIMIT 1"
             ).fetchone()
         return json.loads(row["snapshot_json"]) if row else None
+
+    def quota_snapshot_by_hash(self, snapshot_hash: str) -> Optional[Dict[str, Any]]:
+        """Return a normalized snapshot by its opaque content hash.
+
+        Quota-guard state stores this hash instead of copying quota values.  The
+        method is intentionally read-only so callers can fetch the stop
+        snapshot before making a decision without keeping a transaction open.
+        """
+        with self.reader() as connection:
+            row = connection.execute(
+                "SELECT snapshot_json FROM quota_snapshots WHERE snapshot_hash = ?",
+                (snapshot_hash,),
+            ).fetchone()
+        return json.loads(row["snapshot_json"]) if row else None
+
+    # A descriptive alias keeps the persistence API discoverable to callers
+    # that use the table's plural name.
+    get_quota_snapshot_by_hash = quota_snapshot_by_hash
 
     def account_fingerprint_key(self) -> str:
         with self.reader() as connection:
@@ -684,6 +796,490 @@ class Store:
             }
             for row in rows
         ]
+
+    # ------------------------------------------------------------------
+    # Quota guard persistence
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _guard_session_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+        value = dict(row)
+        Store._guard_session_state(value.get("state"))
+        encoded = value.pop("tripped_windows_json")
+        try:
+            tripped = json.loads(encoded)
+        except (TypeError, ValueError) as exc:
+            raise SchedulerError(
+                "STATE_INVALID", "The quota-guard trip window record is invalid"
+            ) from exc
+        if not isinstance(tripped, list) or any(
+            not isinstance(item, str) or not item for item in tripped
+        ):
+            raise SchedulerError(
+                "STATE_INVALID", "The quota-guard trip window record is invalid"
+            )
+        value["tripped_windows"] = list(tripped)
+        return value
+
+    @staticmethod
+    def _guard_target_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+        value = dict(row)
+        Store._guard_target_state(value.get("state"))
+        pause_token = value.get("goal_pause_updated_at")
+        if pause_token is not None and (
+            isinstance(pause_token, bool) or not isinstance(pause_token, int) or pause_token < 0
+        ):
+            raise SchedulerError("STATE_INVALID", "The quota-guard goal ownership token is invalid")
+        return value
+
+    @staticmethod
+    def _guard_session_state(state: str) -> str:
+        if state not in QUOTA_GUARD_SESSION_STATES:
+            raise SchedulerError("STATE_INVALID", "The quota-guard session state is invalid")
+        return state
+
+    @staticmethod
+    def _guard_target_state(state: str) -> str:
+        if state not in QUOTA_GUARD_TARGET_STATES:
+            raise SchedulerError("STATE_INVALID", "The quota-guard target state is invalid")
+        return state
+
+    @staticmethod
+    def _guard_target_input(value: Any) -> Dict[str, Any]:
+        if isinstance(value, str):
+            value = {"thread_id": value}
+        if not isinstance(value, dict):
+            raise SchedulerError("STATE_INVALID", "A quota-guard target must be an object")
+        thread_id = value.get("thread_id", value.get("id"))
+        if not isinstance(thread_id, str) or not thread_id:
+            raise SchedulerError("STATE_INVALID", "A quota-guard target has no thread identifier")
+        state = value.get("state", "MONITORING")
+        Store._guard_target_state(state)
+        return {
+            "thread_id": thread_id,
+            "state": state,
+            "original_status": value.get("original_status"),
+            "original_turn_id": value.get("original_turn_id"),
+            "goal_was_active": int(bool(value.get("goal_was_active", False))),
+            "goal_changed_by_guard": int(bool(value.get("goal_changed_by_guard", False))),
+            "goal_pause_updated_at": value.get("goal_pause_updated_at"),
+            "reason_code": value.get("reason_code"),
+        }
+
+    @staticmethod
+    def _guard_session_select() -> str:
+        return (
+            "SELECT guard_id, state, profile_key, limit_id, "
+            "threshold_remaining_percent, resume_hysteresis_percent, "
+            "check_interval_seconds, resume_non_goal_threads, approval_id, "
+            "plan_hash, stop_snapshot_hash, tripped_windows_json, next_check_at, "
+            "last_checked_at, reason_code, revision, created_at, updated_at "
+            "FROM quota_guard_sessions"
+        )
+
+    @staticmethod
+    def _guard_target_select() -> str:
+        return (
+            "SELECT guard_id, thread_id, state, original_status, original_turn_id, "
+            "goal_was_active, goal_changed_by_guard, goal_pause_updated_at, reason_code, revision, "
+            "created_at, updated_at FROM quota_guard_targets"
+        )
+
+    def create_quota_guard_session(
+        self,
+        *,
+        guard_id: str,
+        state: str = "ARMED",
+        profile_key: str,
+        limit_id: str,
+        threshold_remaining_percent: float,
+        resume_hysteresis_percent: float,
+        check_interval_seconds: int,
+        resume_non_goal_threads: bool,
+        approval_id: str,
+        plan_hash: str,
+        stop_snapshot_hash: Optional[str] = None,
+        tripped_windows: Sequence[str] = (),
+        next_check_at: float,
+        last_checked_at: Optional[float] = None,
+        reason_code: Optional[str] = None,
+        revision: int = 1,
+        created_at: float,
+        updated_at: Optional[float] = None,
+        targets: Sequence[Any] = (),
+    ) -> Dict[str, Any]:
+        """Create one guard and its selected targets in one local transaction.
+
+        This method stores only policy, opaque hashes, identifiers, and state.
+        It never accepts or persists plan/objective/prompt/output content.
+        """
+        self._guard_session_state(state)
+        if not isinstance(guard_id, str) or not guard_id:
+            raise SchedulerError("STATE_INVALID", "A quota-guard id is required")
+        if not isinstance(profile_key, str) or not profile_key:
+            raise SchedulerError("STATE_INVALID", "A quota-guard profile is required")
+        if not isinstance(limit_id, str) or not limit_id:
+            raise SchedulerError("STATE_INVALID", "A quota-guard limit is required")
+        if not isinstance(approval_id, str) or not approval_id:
+            raise SchedulerError("STATE_INVALID", "A quota-guard approval is required")
+        if not isinstance(plan_hash, str) or not plan_hash:
+            raise SchedulerError("STATE_INVALID", "A quota-guard plan hash is required")
+        if not isinstance(tripped_windows, (list, tuple, set)):
+            raise SchedulerError("STATE_INVALID", "Quota-guard trip windows must be a list")
+        normalized_windows = []
+        for item in tripped_windows:
+            if not isinstance(item, str) or not item:
+                raise SchedulerError("STATE_INVALID", "A quota-guard trip window is invalid")
+            if item not in normalized_windows:
+                normalized_windows.append(item)
+        normalized_targets = [self._guard_target_input(value) for value in targets]
+        if len({value["thread_id"] for value in normalized_targets}) != len(normalized_targets):
+            raise SchedulerError("STATE_INVALID", "Quota-guard targets must be unique")
+        updated = created_at if updated_at is None else updated_at
+        try:
+            with self.transaction() as connection:
+                connection.execute(
+                    """INSERT INTO quota_guard_sessions(
+                           guard_id, state, profile_key, limit_id,
+                           threshold_remaining_percent, resume_hysteresis_percent,
+                           check_interval_seconds, resume_non_goal_threads,
+                           approval_id, plan_hash, stop_snapshot_hash,
+                           tripped_windows_json, next_check_at, last_checked_at,
+                           reason_code, revision, created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        guard_id,
+                        state,
+                        profile_key,
+                        limit_id,
+                        float(threshold_remaining_percent),
+                        float(resume_hysteresis_percent),
+                        int(check_interval_seconds),
+                        int(bool(resume_non_goal_threads)),
+                        approval_id,
+                        plan_hash,
+                        stop_snapshot_hash,
+                        canonical_json(normalized_windows),
+                        float(next_check_at),
+                        last_checked_at,
+                        reason_code,
+                        int(revision),
+                        float(created_at),
+                        float(updated),
+                    ),
+                )
+                for target in normalized_targets:
+                    connection.execute(
+                        """INSERT INTO quota_guard_targets(
+                               guard_id, thread_id, state, original_status,
+                               original_turn_id, goal_was_active,
+                               goal_changed_by_guard, goal_pause_updated_at,
+                               reason_code, revision, created_at, updated_at
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            guard_id,
+                            target["thread_id"],
+                            target["state"],
+                            target["original_status"],
+                            target["original_turn_id"],
+                            target["goal_was_active"],
+                            target["goal_changed_by_guard"],
+                            target["goal_pause_updated_at"],
+                            target["reason_code"],
+                            1,
+                            float(created_at),
+                            float(updated),
+                        ),
+                    )
+        except sqlite3.IntegrityError as exc:
+            if "quota_guard_sessions.guard_id" in str(exc) or "UNIQUE constraint failed" in str(exc):
+                raise SchedulerError("GUARD_EXISTS", "The quota-guard id already exists") from exc
+            raise SchedulerError(
+                "STATE_INVALID", "The quota-guard session could not be stored"
+            ) from exc
+        return self.get_quota_guard_session(guard_id)
+
+    # Short aliases are kept for callers that model the row as a guard rather
+    # than as a session.  They share the same strict implementation above.
+    create_quota_guard = create_quota_guard_session
+
+    def get_quota_guard_session(self, guard_id: str) -> Dict[str, Any]:
+        with self.reader() as connection:
+            row = connection.execute(
+                self._guard_session_select() + " WHERE guard_id = ?", (guard_id,)
+            ).fetchone()
+        if row is None:
+            raise SchedulerError("GUARD_NOT_FOUND", "The requested quota guard does not exist")
+        return self._guard_session_from_row(row)
+
+    get_quota_guard = get_quota_guard_session
+
+    def list_quota_guard_sessions(
+        self,
+        *,
+        states: Optional[Sequence[str]] = None,
+        due_before: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        clauses: List[str] = []
+        params: List[Any] = []
+        if states is not None:
+            normalized_states = [self._guard_session_state(state) for state in states]
+            if not normalized_states:
+                return []
+            clauses.append("state IN (%s)" % ",".join("?" for _ in normalized_states))
+            params.extend(normalized_states)
+        if due_before is not None:
+            clauses.append("next_check_at <= ?")
+            params.append(float(due_before))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self.reader() as connection:
+            rows = connection.execute(
+                self._guard_session_select() + where + " ORDER BY created_at ASC, guard_id ASC",
+                tuple(params),
+            ).fetchall()
+        return [self._guard_session_from_row(row) for row in rows]
+
+    list_quota_guards = list_quota_guard_sessions
+
+    def list_due_quota_guard_sessions(self, *, now: float) -> List[Dict[str, Any]]:
+        return self.list_quota_guard_sessions(
+            states=("ARMED", "HELD_QUOTA"), due_before=now
+        )
+
+    def get_quota_guard_target(self, guard_id: str, thread_id: str) -> Dict[str, Any]:
+        with self.reader() as connection:
+            row = connection.execute(
+                self._guard_target_select()
+                + " WHERE guard_id = ? AND thread_id = ?",
+                (guard_id, thread_id),
+            ).fetchone()
+        if row is None:
+            raise SchedulerError("GUARD_TARGET_NOT_FOUND", "The requested quota-guard target does not exist")
+        return self._guard_target_from_row(row)
+
+    def list_quota_guard_targets(self, guard_id: str) -> List[Dict[str, Any]]:
+        with self.reader() as connection:
+            rows = connection.execute(
+                self._guard_target_select()
+                + " WHERE guard_id = ? ORDER BY created_at ASC, thread_id ASC",
+                (guard_id,),
+            ).fetchall()
+        return [self._guard_target_from_row(row) for row in rows]
+
+    list_guard_targets = list_quota_guard_targets
+
+    def update_quota_guard_session(
+        self,
+        guard_id: str,
+        *,
+        expected_revision: Optional[int] = None,
+        expected_state: Optional[str] = None,
+        now: Optional[float] = None,
+        **changes: Any,
+    ) -> Dict[str, Any]:
+        """Update a session with an optimistic, state-aware revision check."""
+        if expected_state is not None:
+            self._guard_session_state(expected_state)
+        if "state" in changes:
+            self._guard_session_state(changes["state"])
+        if "tripped_windows" in changes:
+            values = changes.pop("tripped_windows")
+            if not isinstance(values, (list, tuple, set)):
+                raise SchedulerError("STATE_INVALID", "Quota-guard trip windows must be a list")
+            normalized = []
+            for item in values:
+                if not isinstance(item, str) or not item:
+                    raise SchedulerError("STATE_INVALID", "A quota-guard trip window is invalid")
+                if item not in normalized:
+                    normalized.append(item)
+            changes["tripped_windows_json"] = canonical_json(normalized)
+        allowed = {
+            "state",
+            "profile_key",
+            "limit_id",
+            "threshold_remaining_percent",
+            "resume_hysteresis_percent",
+            "check_interval_seconds",
+            "resume_non_goal_threads",
+            "approval_id",
+            "plan_hash",
+            "stop_snapshot_hash",
+            "tripped_windows_json",
+            "next_check_at",
+            "last_checked_at",
+            "reason_code",
+        }
+        unknown = set(changes) - allowed
+        if unknown:
+            raise SchedulerError("STATE_INVALID", "The quota-guard session update is invalid")
+        changes = dict(changes)
+        if "resume_non_goal_threads" in changes:
+            changes["resume_non_goal_threads"] = int(bool(changes["resume_non_goal_threads"]))
+        if not changes:
+            return self.get_quota_guard_session(guard_id)
+        assignments = ["%s = ?" % key for key in changes]
+        params: List[Any] = list(changes.values())
+        params.append(float(now if now is not None else 0.0))
+        where = ["guard_id = ?"]
+        params.append(guard_id)
+        if expected_revision is not None:
+            where.append("revision = ?")
+            params.append(int(expected_revision))
+        if expected_state is not None:
+            where.append("state = ?")
+            params.append(expected_state)
+        with self.transaction() as connection:
+            changed = connection.execute(
+                "UPDATE quota_guard_sessions SET %s, revision = revision + 1, updated_at = ? WHERE %s"
+                % (", ".join(assignments), " AND ".join(where)),
+                tuple(params),
+            ).rowcount
+            if changed != 1:
+                current = connection.execute(
+                    "SELECT revision FROM quota_guard_sessions WHERE guard_id = ?", (guard_id,)
+                ).fetchone()
+                if current is None:
+                    raise SchedulerError("GUARD_NOT_FOUND", "The requested quota guard does not exist")
+                raise SchedulerError(
+                    "REVISION_CONFLICT", "The quota-guard session changed concurrently", retryable=True
+                )
+        return self.get_quota_guard_session(guard_id)
+
+    def transition_quota_guard_session(
+        self,
+        guard_id: str,
+        state: str,
+        *,
+        expected_revision: Optional[int] = None,
+        expected_state: Optional[str] = None,
+        now: Optional[float] = None,
+        **changes: Any,
+    ) -> Dict[str, Any]:
+        changes["state"] = state
+        return self.update_quota_guard_session(
+            guard_id,
+            expected_revision=expected_revision,
+            expected_state=expected_state,
+            now=now,
+            **changes,
+        )
+
+    def update_quota_guard_target(
+        self,
+        guard_id: str,
+        thread_id: str,
+        *,
+        expected_revision: Optional[int] = None,
+        expected_state: Optional[str] = None,
+        now: Optional[float] = None,
+        **changes: Any,
+    ) -> Dict[str, Any]:
+        if expected_state is not None:
+            self._guard_target_state(expected_state)
+        if "state" in changes:
+            self._guard_target_state(changes["state"])
+        allowed = {
+            "state",
+            "original_status",
+            "original_turn_id",
+            "goal_was_active",
+            "goal_changed_by_guard",
+            "goal_pause_updated_at",
+            "reason_code",
+        }
+        if set(changes) - allowed:
+            raise SchedulerError("STATE_INVALID", "The quota-guard target update is invalid")
+        changes = dict(changes)
+        if "goal_was_active" in changes:
+            changes["goal_was_active"] = int(bool(changes["goal_was_active"]))
+        if "goal_changed_by_guard" in changes:
+            changes["goal_changed_by_guard"] = int(bool(changes["goal_changed_by_guard"]))
+        if not changes:
+            return self.get_quota_guard_target(guard_id, thread_id)
+        assignments = ["%s = ?" % key for key in changes]
+        params: List[Any] = list(changes.values())
+        params.append(float(now if now is not None else 0.0))
+        where = ["guard_id = ?", "thread_id = ?"]
+        params.extend((guard_id, thread_id))
+        if expected_revision is not None:
+            where.append("revision = ?")
+            params.append(int(expected_revision))
+        if expected_state is not None:
+            where.append("state = ?")
+            params.append(expected_state)
+        with self.transaction() as connection:
+            changed = connection.execute(
+                "UPDATE quota_guard_targets SET %s, revision = revision + 1, updated_at = ? WHERE %s"
+                % (", ".join(assignments), " AND ".join(where)),
+                tuple(params),
+            ).rowcount
+            if changed != 1:
+                current = connection.execute(
+                    "SELECT revision FROM quota_guard_targets WHERE guard_id = ? AND thread_id = ?",
+                    (guard_id, thread_id),
+                ).fetchone()
+                if current is None:
+                    raise SchedulerError(
+                        "GUARD_TARGET_NOT_FOUND",
+                        "The requested quota-guard target does not exist",
+                    )
+                raise SchedulerError(
+                    "REVISION_CONFLICT", "The quota-guard target changed concurrently", retryable=True
+                )
+        return self.get_quota_guard_target(guard_id, thread_id)
+
+    def transition_quota_guard_target(
+        self,
+        guard_id: str,
+        thread_id: str,
+        state: str,
+        *,
+        expected_revision: Optional[int] = None,
+        expected_state: Optional[str] = None,
+        now: Optional[float] = None,
+        **changes: Any,
+    ) -> Dict[str, Any]:
+        changes["state"] = state
+        return self.update_quota_guard_target(
+            guard_id,
+            thread_id,
+            expected_revision=expected_revision,
+            expected_state=expected_state,
+            now=now,
+            **changes,
+        )
+
+    def recover_quota_guard_pending(self, *, now: float, reason_code: str = "CRASH_PENDING_EXTERNAL_CALL") -> List[str]:
+        """Fence any committed external-call state after a process crash.
+
+        The method only mutates local state.  It deliberately never invokes an
+        adapter RPC, so a restarted coordinator cannot replay an uncertain call.
+        """
+        with self.transaction() as connection:
+            pending_rows = connection.execute(
+                """SELECT DISTINCT guard_id FROM quota_guard_targets
+                   WHERE state IN ('STOPPING', 'RESUMING')
+                   UNION SELECT guard_id FROM quota_guard_sessions
+                   WHERE state IN ('STOPPING', 'RESUMING')"""
+            ).fetchall()
+            guard_ids = [row["guard_id"] for row in pending_rows]
+            for guard_id in guard_ids:
+                connection.execute(
+                    """UPDATE quota_guard_targets
+                       SET state = 'NEEDS_REVIEW', reason_code = ?,
+                           revision = revision + 1, updated_at = ?
+                       WHERE guard_id = ?
+                         AND state NOT IN ('COMPLETED', 'RESUMED', 'NEEDS_REVIEW')""",
+                    (reason_code, float(now), guard_id),
+                )
+                connection.execute(
+                    """UPDATE quota_guard_sessions
+                       SET state = 'NEEDS_REVIEW', reason_code = ?,
+                           revision = revision + 1, updated_at = ?
+                       WHERE guard_id = ? AND state <> 'DISARMED'""",
+                    (reason_code, float(now), guard_id),
+                )
+        return sorted(guard_ids)
 
     def counts(self, *, now: float) -> Dict[str, Any]:
         with self.reader() as connection:

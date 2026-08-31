@@ -12,7 +12,9 @@ from .live_test import CodexLiveTestRunner
 from .monitor import CodexThreadMonitor
 from .policy import evaluate_policy, has_signal_failure, invalid_signal_decision
 from .probe import CodexAppServerProbe
+from .quota_guard import QuotaGuardCoordinator
 from .store import Store
+from .thread_control import CodexThreadControl
 from .util import canonical_json, new_id, payload_hash
 from .validation import (
     ensure_profile,
@@ -21,6 +23,7 @@ from .validation import (
     validate_job,
     validate_identifier,
     validate_policy,
+    validate_quota_guard_plan,
     validate_snapshot,
     validate_work_package,
 )
@@ -39,6 +42,8 @@ class Controller:
         live_test_runner: Optional[CodexLiveTestRunner] = None,
         monitor: Optional[CodexThreadMonitor] = None,
         work_runner: Optional[CodexWorkRunner] = None,
+        thread_control: Optional[CodexThreadControl] = None,
+        quota_guard: Optional[QuotaGuardCoordinator] = None,
     ) -> None:
         if config.get("dry_run") is not True:
             raise SchedulerError("DRY_RUN_REQUIRED", "The general work controller requires dry_run to be true")
@@ -50,6 +55,13 @@ class Controller:
         self.live_test_runner = live_test_runner or CodexLiveTestRunner(clock=clock)
         self.monitor = monitor or CodexThreadMonitor(clock=clock)
         self.work_runner = work_runner or CodexWorkRunner(clock=clock)
+        self.thread_control = thread_control or CodexThreadControl(clock=clock)
+        self.quota_guard = quota_guard or QuotaGuardCoordinator(
+            store,
+            self.thread_control,
+            clock=clock,
+            max_snapshot_age_seconds=config["policy"]["max_snapshot_age_seconds"],
+        )
         self.store.bootstrap(policy=config["policy"], now=self.clock())
 
     def _account_binding_view(self) -> Dict[str, Any]:
@@ -181,7 +193,317 @@ class Controller:
                 "decision": decision,
                 "snapshot": snapshot,
             },
+            "quota_guard": {
+                "configured": self.config["quota_guard"]["enabled"],
+                "sessions": [
+                    self._quota_guard_session_view(item)
+                    for item in self.store.list_quota_guard_sessions()
+                ],
+            },
         }
+
+    def _quota_guard_scope(self, plan_value: Dict[str, Any]) -> Dict[str, Any]:
+        plan = validate_quota_guard_plan(plan_value, self.config)
+        snapshot = self.store.latest_snapshot()
+        decision = self._evaluate_current_policy(
+            snapshot,
+            self.store.policy()["policy"],
+            now=self.clock(),
+        )
+        if snapshot is None or has_signal_failure(decision):
+            code = decision["reasons"][0] if decision["reasons"] else "SIGNAL_MISSING"
+            raise SchedulerError(
+                code,
+                "A fresh account-bound quota signal is required before quota-guard approval",
+            )
+        return {
+            **plan,
+            "profile_key": self.config["profile_key"],
+            "limit_id": snapshot["limit_id"],
+            "resume_hysteresis_percent": self.config["quota_guard"][
+                "resume_hysteresis_percent"
+            ],
+        }
+
+    def _quota_guard_session_view(self, session: Dict[str, Any]) -> Dict[str, Any]:
+        targets = self.store.list_quota_guard_targets(session["guard_id"])
+        return {
+            "schema_version": "1",
+            "guard_id": session["guard_id"],
+            "state": session["state"],
+            "threshold_remaining_percent": session["threshold_remaining_percent"],
+            "check_interval_seconds": session["check_interval_seconds"],
+            "target_count": len(targets),
+            "next_check_at": session["next_check_at"],
+            "last_checked_at": session["last_checked_at"],
+            "reason_code": session["reason_code"],
+            "created_at": session["created_at"],
+            "updated_at": session["updated_at"],
+        }
+
+    def quota_guard_inventory(self) -> Dict[str, Any]:
+        self._require_capability("quota_guard.read")
+        return {"threads": self.thread_control.inventory_active_threads()}
+
+    def quota_guard_list(self) -> Dict[str, Any]:
+        self._require_capability("quota_guard.read")
+        return {
+            "sessions": [
+                self._quota_guard_session_view(item)
+                for item in self.store.list_quota_guard_sessions()
+            ]
+        }
+
+    def quota_guard_status(self, guard_id: str) -> Dict[str, Any]:
+        self._require_capability("quota_guard.read")
+        guard_id = validate_identifier(guard_id, "guard_id")
+        session = self.store.get_quota_guard_session(guard_id)
+        targets = self.store.list_quota_guard_targets(guard_id)
+        return {
+            "session": self._quota_guard_session_view(session),
+            "targets": [
+                {
+                    "thread_id": item["thread_id"],
+                    "state": item["state"],
+                    "goal_changed_by_guard": bool(item["goal_changed_by_guard"]),
+                    "reason_code": item["reason_code"],
+                }
+                for item in targets
+            ],
+        }
+
+    def quota_guard_arm(
+        self,
+        plan_value: Dict[str, Any],
+        approval_value: Dict[str, Any],
+        *,
+        idempotency_key: str,
+        actor: str,
+    ) -> Dict[str, Any]:
+        self._require_capability("quota_guard.local.write")
+        self._require_capability("quota_guard.thread.control")
+        if not self.config["quota_guard"]["enabled"]:
+            raise SchedulerError("QUOTA_GUARD_DISABLED", "Quota guard is disabled in configuration")
+        if not self.config["background"]["enabled"]:
+            raise SchedulerError(
+                "BACKGROUND_DISABLED",
+                "The recurring quota-guard loop requires the foreground service to be enabled",
+            )
+        actor = self._actor(actor)
+        now = self.clock()
+        scope_value = self._quota_guard_scope(plan_value)
+        if self.config["background"]["poll_interval_seconds"] > scope_value["check_interval_seconds"]:
+            raise SchedulerError(
+                "QUOTA_GUARD_INTERVAL_UNACHIEVABLE",
+                "The background poll interval exceeds the requested quota-guard interval",
+            )
+        approval = validate_approval(approval_value, now=now, allow_expired=True)
+        request = {"approval": approval, "scope": scope_value}
+        replay = self.store.replay_idempotent(
+            key=idempotency_key,
+            command="quota-guard.arm",
+            request=request,
+        )
+        if replay is not None:
+            return self._with_replay(replay, True)
+        approval = validate_approval(approval_value, now=now)
+        scope_hash = payload_hash(scope_value)
+        require_approval(
+            approval,
+            action="quota-guard.arm",
+            scope_hash=scope_hash,
+            capability="quota_guard.thread.control",
+        )
+        guard_id = new_id("guard")
+
+        def operation(connection: sqlite3.Connection) -> Dict[str, Any]:
+            active = connection.execute(
+                "SELECT guard_id FROM quota_guard_sessions WHERE state <> 'DISARMED' LIMIT 1"
+            ).fetchone()
+            if active is not None:
+                raise SchedulerError(
+                    "QUOTA_GUARD_ACTIVE",
+                    "Only one quota guard can be active at a time",
+                )
+            self._insert_approval(connection, approval)
+            connection.execute(
+                """INSERT INTO quota_guard_sessions(
+                       guard_id, state, profile_key, limit_id,
+                       threshold_remaining_percent, resume_hysteresis_percent,
+                       check_interval_seconds, resume_non_goal_threads,
+                       approval_id, plan_hash, stop_snapshot_hash,
+                       tripped_windows_json, next_check_at, last_checked_at,
+                       reason_code, revision, created_at, updated_at
+                   ) VALUES (?, 'ARMED', ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', ?, NULL, NULL, 1, ?, ?)""",
+                (
+                    guard_id,
+                    scope_value["profile_key"],
+                    scope_value["limit_id"],
+                    scope_value["threshold_remaining_percent"],
+                    scope_value["resume_hysteresis_percent"],
+                    scope_value["check_interval_seconds"],
+                    int(scope_value["resume_non_goal_threads"]),
+                    approval["approval_id"],
+                    scope_hash,
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            for thread_id in scope_value["target_thread_ids"]:
+                connection.execute(
+                    """INSERT INTO quota_guard_targets(
+                           guard_id, thread_id, state, original_status,
+                           original_turn_id, goal_was_active,
+                           goal_changed_by_guard, reason_code, revision,
+                           created_at, updated_at
+                       ) VALUES (?, ?, 'MONITORING', NULL, NULL, 0, 0, NULL, 1, ?, ?)""",
+                    (guard_id, thread_id, now, now),
+                )
+            event_id = self.store.append_audit(
+                connection,
+                event_type="quota_guard.armed",
+                actor=actor,
+                details={
+                    "approval_id": approval["approval_id"],
+                    "guard_id": guard_id,
+                    "plan_hash": scope_hash,
+                    "target_count": len(scope_value["target_thread_ids"]),
+                },
+                now=now,
+            )
+            return {
+                "approval_id": approval["approval_id"],
+                "audit_event_id": event_id,
+                "guard_id": guard_id,
+                "plan_hash": scope_hash,
+                "state": "ARMED",
+                "target_count": len(scope_value["target_thread_ids"]),
+            }
+
+        result, replayed = self.store.execute_idempotent(
+            key=idempotency_key,
+            command="quota-guard.arm",
+            request=request,
+            now=now,
+            operation=operation,
+        )
+        return self._with_replay(result, replayed)
+
+    def quota_guard_disarm(
+        self,
+        guard_id: str,
+        *,
+        idempotency_key: str,
+        actor: str,
+    ) -> Dict[str, Any]:
+        self._require_capability("quota_guard.local.write")
+        guard_id = validate_identifier(guard_id, "guard_id")
+        actor = self._actor(actor)
+        now = self.clock()
+        request = {"guard_id": guard_id}
+
+        def operation(connection: sqlite3.Connection) -> Dict[str, Any]:
+            row = connection.execute(
+                "SELECT state FROM quota_guard_sessions WHERE guard_id = ?", (guard_id,)
+            ).fetchone()
+            if row is None:
+                raise SchedulerError("GUARD_NOT_FOUND", "The requested quota guard does not exist")
+            previous = row["state"]
+            if previous != "DISARMED":
+                connection.execute(
+                    """UPDATE quota_guard_sessions
+                       SET state = 'DISARMED', reason_code = 'OPERATOR_DISARM',
+                           revision = revision + 1, updated_at = ?
+                       WHERE guard_id = ?""",
+                    (now, guard_id),
+                )
+            event_id = self.store.append_audit(
+                connection,
+                event_type="quota_guard.disarmed",
+                actor=actor,
+                details={"from": previous, "guard_id": guard_id, "to": "DISARMED"},
+                now=now,
+            )
+            return {
+                "audit_event_id": event_id,
+                "guard_id": guard_id,
+                "previous_state": previous,
+                "state": "DISARMED",
+            }
+
+        result, replayed = self.store.execute_idempotent(
+            key=idempotency_key,
+            command="quota-guard.disarm",
+            request=request,
+            now=now,
+            operation=operation,
+        )
+        return self._with_replay(result, replayed)
+
+    def quota_guard_cycle(
+        self,
+        *,
+        signal_available: bool = True,
+        allow_resume: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        if not self.config["quota_guard"]["enabled"]:
+            return {"enabled": False, "guards_checked": 0, "outcomes": []}
+        controller_before = self.store.controller()
+        if controller_before["mode"] == "STOPPED":
+            return {
+                "enabled": True,
+                "guards_checked": 0,
+                "outcomes": [],
+                "skipped": "CONTROLLER_STOPPED",
+            }
+        self._require_capability("quota_guard.local.write")
+        self._require_capability("quota_guard.thread.control")
+        resume_allowed = (
+            controller_before["mode"] != "BLOCKED"
+            if allow_resume is None
+            else bool(allow_resume) and controller_before["mode"] != "BLOCKED"
+        )
+        result = self.quota_guard.one_due_cycle(
+            now=self.clock(),
+            allow_resume=resume_allowed,
+            signal_available=signal_available,
+        )
+        states = {item["state"] for item in result["outcomes"]}
+        target_mode = None
+        reason_code = None
+        if "NEEDS_REVIEW" in states:
+            target_mode = "BLOCKED"
+            reason_code = "QUOTA_GUARD_NEEDS_REVIEW"
+        elif states & {"STOPPING", "HELD_QUOTA", "RESUMING"}:
+            target_mode = "PAUSED"
+            reason_code = "QUOTA_GUARD_HELD"
+        if target_mode is not None:
+            with self.store.transaction() as connection:
+                current = connection.execute(
+                    "SELECT mode, reason_code FROM controller WHERE singleton = 1"
+                ).fetchone()
+                mode_change_allowed = (
+                    current["mode"] not in {"STOPPED", "BLOCKED"}
+                    or target_mode == "BLOCKED"
+                )
+                if mode_change_allowed and (
+                    current["mode"] != target_mode or current["reason_code"] != reason_code
+                ):
+                    self.store.set_controller(
+                        connection,
+                        mode=target_mode,
+                        reason_code=reason_code,
+                        now=self.clock(),
+                    )
+                    self.store.append_audit(
+                        connection,
+                        event_type="quota_guard.controller_hold",
+                        actor="quota-guard",
+                        details={"from": current["mode"], "reason_code": reason_code, "to": target_mode},
+                        now=self.clock(),
+                    )
+        return {"enabled": True, **result}
 
     def queue_list(self) -> Dict[str, Any]:
         self._require_capability("queue.read")
@@ -620,6 +942,13 @@ class Controller:
             issues.append("LEASE_ACTIVE")
         if any(run["state"] in {"starting", "running"} for run in self.store.list_runs()):
             issues.append("RUN_ACTIVE")
+        guard_states = {
+            item["state"] for item in self.store.list_quota_guard_sessions()
+        }
+        if "NEEDS_REVIEW" in guard_states:
+            issues.append("QUOTA_GUARD_NEEDS_REVIEW")
+        elif guard_states & {"STOPPING", "HELD_QUOTA", "RESUMING"}:
+            issues.append("QUOTA_GUARD_HELD")
         approval_requirement = None
         if action is not None:
             if action == "queue.submit":
@@ -656,6 +985,14 @@ class Controller:
                     raise SchedulerError("INVALID_ARGUMENT", "live-test.run preflight does not accept an input")
                 scoped_value = self._live_test_scope()
                 capability = "live_test.dispatch"
+            elif action == "quota-guard.arm":
+                if input_value is None:
+                    raise SchedulerError(
+                        "INVALID_ARGUMENT",
+                        "quota-guard.arm preflight requires a plan input",
+                    )
+                scoped_value = self._quota_guard_scope(input_value)
+                capability = "quota_guard.thread.control"
             else:
                 raise SchedulerError("INVALID_ARGUMENT", "The preflight action is unsupported")
             self._require_capability(capability)
@@ -2043,6 +2380,13 @@ class Controller:
             issues.append("LEASE_ACTIVE")
         if any(run["state"] in {"starting", "running"} for run in self.store.list_runs()):
             issues.append("RUN_ACTIVE")
+        guard_states = {
+            item["state"] for item in self.store.list_quota_guard_sessions()
+        }
+        if "NEEDS_REVIEW" in guard_states:
+            issues.append("QUOTA_GUARD_NEEDS_REVIEW")
+        elif guard_states & {"STOPPING", "HELD_QUOTA", "RESUMING"}:
+            issues.append("QUOTA_GUARD_HELD")
         if self.store.reconciliation_candidates(now=now) or self.store.run_reconciliation_candidates(now=now):
             issues.append("RECONCILE_REQUIRED")
         integrity = self.store.integrity()
@@ -2143,6 +2487,22 @@ class Controller:
             ).fetchone()
             if controller["mode"] != "READY":
                 raise SchedulerError("CONTROLLER_NOT_READY", "The controller is not ready")
+            guard_states = {
+                row["state"]
+                for row in connection.execute(
+                    "SELECT state FROM quota_guard_sessions WHERE state <> 'DISARMED'"
+                ).fetchall()
+            }
+            if "NEEDS_REVIEW" in guard_states:
+                raise SchedulerError(
+                    "QUOTA_GUARD_NEEDS_REVIEW",
+                    "A quota guard requires review at claim time",
+                )
+            if guard_states & {"STOPPING", "HELD_QUOTA", "RESUMING"}:
+                raise SchedulerError(
+                    "QUOTA_GUARD_HELD",
+                    "A quota guard blocks dispatch at claim time",
+                )
             active = connection.execute(
                 "SELECT COUNT(*) AS count FROM runs WHERE state IN ('starting', 'running')"
             ).fetchone()["count"]
@@ -2296,6 +2656,14 @@ class Controller:
                     "SELECT mode FROM controller WHERE singleton = 1"
                 ).fetchone()
                 if controller["mode"] not in {"READY", "PAUSED"}:
+                    return False
+                guard_states = {
+                    row["state"]
+                    for row in connection.execute(
+                        "SELECT state FROM quota_guard_sessions WHERE state <> 'DISARMED'"
+                    ).fetchall()
+                }
+                if guard_states & {"STOPPING", "HELD_QUOTA", "RESUMING", "NEEDS_REVIEW"}:
                     return False
                 run = connection.execute(
                     """SELECT state FROM runs
